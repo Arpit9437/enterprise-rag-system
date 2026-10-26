@@ -4,11 +4,13 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.api.routes.auth import router as auth_router
 from app.api.routes.tenants import router as tenants_router
+from app.api.routes.documents import router as documents_router
 
 app = FastAPI()
 
 app.include_router(auth_router)
 app.include_router(tenants_router)
+app.include_router(documents_router)
 
 @app.get("/health")
 def health_check():
