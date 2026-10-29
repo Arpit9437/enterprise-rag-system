@@ -1,25 +1,35 @@
+import logging
+
 from fastapi import APIRouter, Depends, status, HTTPException
 from typing import Annotated
 from uuid import UUID
 
-from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.tenant_dependencies import require_tenant_admin
 from app.core.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.tenants import Tenant
+from app.models.document import Document
 from app.models.tenant_membership import TenantMembership
 from app.models.users import User
 from app.schemas.tenant import TenantCreate, TenantResponse, TenantMemberAdd, TenantMemberListResponse, TenantMemberResponse, TenantMemberRoleUpdate
+from app.services.document_storage import delete_stored_file
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/tenants", tags=["Tenants"])
 
 @router.post(
     "",
     response_model=TenantResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Create a tenant",
+    description=(
+        "Create a workspace. The authenticated user becomes its first "
+        "administrator."
+    ),
 )
 def create_tenant(
     payload: TenantCreate,
@@ -30,7 +40,7 @@ def create_tenant(
 
     if not tenant.name:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Tenant name cannot be blank",
         )
 
@@ -57,11 +67,20 @@ def create_tenant(
             detail="A tenant with this name already exists.",
         ) from exc
 
-@router.get("", response_model=list[TenantResponse])
+@router.get(
+    "",
+    response_model=list[TenantResponse],
+    summary="List the current user's tenants",
+    description=(
+        "Returns only tenants where the current authenticated account has "
+        "a membership."
+    ),
+)
 def list_tenants(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
+    """List only tenants where the authenticated user is a member."""
     statement = (
         select(Tenant)
         .join(
@@ -75,10 +94,65 @@ def list_tenants(
     return list(db.scalars(statement).all())
 
 
+@router.delete(
+    "/{tenant_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a tenant",
+    description=(
+        "Administrator-only. Deletes tenant records transactionally, then "
+        "attempts local file cleanup."
+    ),
+)
+def delete_tenant(
+    tenant_id: UUID,
+    admin: Annotated[User, Depends(require_tenant_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    storage_keys = db.scalars(
+        select(Document.storage_key).where(
+            Document.tenant_id == tenant_id,
+            Document.storage_key.is_not(None),
+        )
+    ).all()
+    try:
+        result = db.execute(
+            delete(Tenant).where(Tenant.id == tenant_id)
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Tenant not found",
+            )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Could not delete tenant tenant_id=%s", tenant_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to delete tenant",
+        ) from None
+
+    for storage_key in storage_keys:
+        try:
+            delete_stored_file(storage_key)
+        except (OSError, ValueError):
+            logger.exception(
+                "Tenant deletion left an orphaned file tenant_id=%s; "
+                "run the orphan-file cleanup procedure",
+                tenant_id,
+            )
+
+
 @router.post(
     "/{tenant_id}/members",
     response_model=TenantMemberResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Add a tenant member",
+    description=(
+        "Administrator-only. Add an existing account by email with the "
+        "member role by default; only tenant administrators can grant roles."
+    ),
 )
 def add_tenant_member(
     tenant_id: UUID,
@@ -138,6 +212,8 @@ def add_tenant_member(
 @router.get(
     "/{tenant_id}/members",
     response_model=TenantMemberListResponse,
+    summary="List tenant members",
+    description="Administrator-only member and role listing.",
 )
 def list_tenant_members(
     tenant_id: UUID,
@@ -168,6 +244,11 @@ def list_tenant_members(
 @router.patch(
     "/{tenant_id}/members/{user_id}",
     response_model=TenantMemberResponse,
+    summary="Update a member role",
+    description=(
+        "Administrator-only. Roles are restricted to admin or member; the "
+        "last tenant administrator cannot be demoted."
+    ),
 )
 def update_tenant_member_role(
     tenant_id: UUID,
@@ -229,6 +310,10 @@ def update_tenant_member_role(
 @router.delete(
     "/{tenant_id}/members/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove a tenant member",
+    description=(
+        "Administrator-only. The last tenant administrator cannot be removed."
+    ),
 )
 def remove_tenant_member(
     tenant_id: UUID,

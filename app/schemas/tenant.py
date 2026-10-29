@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 from typing import Literal
-from pydantic import EmailStr
+from pydantic import EmailStr, field_validator
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,6 +22,11 @@ class TenantResponse(BaseModel):
 class TenantMemberAdd(BaseModel):
     email: EmailStr
     role: TenantRole = "member"
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
 
 
 class TenantMemberRoleUpdate(BaseModel):

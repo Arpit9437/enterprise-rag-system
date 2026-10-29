@@ -3,6 +3,7 @@ from app.models.users import User
 from app.models.tenant_membership import TenantMembership
 from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
+from app.models.conversation import Conversation, ConversationMessage
 
 __all__ = [
     "Tenant",
@@ -11,4 +12,6 @@ __all__ = [
     "Document",
     "DocumentStatus",
     "DocumentChunk",
+    "Conversation",
+    "ConversationMessage",
 ]

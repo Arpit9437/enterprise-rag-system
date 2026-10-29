@@ -1,9 +1,8 @@
-
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.security import hash_password, verify_login_password
 from app.models.users import User
-from app.core.security import hash_password, verify_password
 
 
 def register_user(
@@ -11,18 +10,20 @@ def register_user(
     email: str,
     password: str,
 ) -> User:
+    email = email.strip().lower()
+    if not email:
+        raise ValueError("An email address is required.")
+
     existing_user = session.scalar(
-        select(User).where(User.email == email)
+        select(User).where(func.lower(User.email) == email)
     )
 
     if existing_user is not None:
         raise ValueError("A user with this email already exists.")
 
-    hashed_password = hash_password(password)
-
     new_user = User(
         email=email,
-        password_hash=hashed_password,
+        password_hash=hash_password(password),
     )
 
     session.add(new_user)
@@ -30,25 +31,25 @@ def register_user(
 
     return new_user
 
-def authenticate_user(
-        email: str,
-        password: str,
-        session: Session,
-) -> User | None:
 
+def authenticate_user(
+    email: str,
+    password: str,
+    session: Session,
+) -> User | None:
     user = session.scalar(
         select(User).where(
-            User.email == email
+            func.lower(User.email) == email.strip().lower()
         )
     )
 
-    if user is None:
+    if not verify_login_password(
+        password,
+        user.password_hash if user is not None else None,
+    ):
         return None
 
-    if not verify_password(password=password, hashed_password=user.password_hash):
-        return None
-
-    if not user.is_active:
+    if user is None or not user.is_active:
         return None
 
     return user

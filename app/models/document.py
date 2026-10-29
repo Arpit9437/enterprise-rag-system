@@ -2,7 +2,16 @@
 import enum
 import uuid
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,6 +34,11 @@ class Document(Base):
             "id",
             "tenant_id",
             name="uq_documents_id_tenant",
+        ),
+        Index(
+            "ix_documents_status_processing_claimed_at",
+            "status",
+            "processing_claimed_at",
         ),
     )
 
@@ -74,5 +88,25 @@ class Document(Base):
 
     content_type: Mapped[str] = mapped_column(
         String(100),
+        nullable=True,
+    )
+
+    processing_claimed_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    processing_claim_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+
+    chunk_size_used: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    chunk_overlap_used: Mapped[int | None] = mapped_column(
+        Integer,
         nullable=True,
     )

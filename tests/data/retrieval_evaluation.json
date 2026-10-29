@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "description": "Small regression set for exact, semantic, multi-chunk and absent-answer retrieval.",
+  "corpus": [
+    {
+      "chunk_id": "product-code",
+      "content": "The QX-14 product code identifies the compact wireless sensor."
+    },
+    {
+      "chunk_id": "leave-carryover",
+      "content": "Employees may carry over up to five unused annual leave days into the next calendar year."
+    },
+    {
+      "chunk_id": "leave-eligibility",
+      "content": "Full-time employees accrue annual leave monthly; part-time eligibility is prorated."
+    },
+    {
+      "chunk_id": "office-location",
+      "content": "The support offices are located in Toronto and Singapore."
+    }
+  ],
+  "queries": [
+    {
+      "id": "exact_product_identifier",
+      "query": "What is the QX-14 code?",
+      "relevant_chunk_ids": ["product-code"]
+    },
+    {
+      "id": "semantic_leave_carryover",
+      "query": "Can unused time off move into the next year?",
+      "relevant_chunk_ids": ["leave-carryover"]
+    },
+    {
+      "id": "multiple_leave_chunks",
+      "query": "Summarize the leave policy",
+      "relevant_chunk_ids": ["leave-carryover", "leave-eligibility"]
+    },
+    {
+      "id": "absent_answer",
+      "query": "Which office is located in Antarctica?",
+      "relevant_chunk_ids": []
+    }
+  ]
+}

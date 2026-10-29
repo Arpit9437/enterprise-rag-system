@@ -1,20 +1,16 @@
 services:
   db:
-    image: postgres:17
+    image: pgvector/pgvector:pg17
     container_name: enterprise-rag-db
     restart: unless-stopped
-
     environment:
       POSTGRES_DB: enterprise_rag
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
-
     ports:
-      - "5433:5432"
-
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d enterprise_rag"]
       interval: 10s
@@ -26,15 +22,11 @@ services:
     image: redis:7-alpine
     container_name: enterprise-rag-redis
     restart: unless-stopped
-
     command: ["redis-server", "--appendonly", "yes"]
-
     ports:
-      - "6379:6379"
-
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
-
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -42,6 +34,98 @@ services:
       retries: 5
       start_period: 5s
 
+  migrate:
+    build: .
+    image: enterprise-rag-app:local
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL_CONTAINER:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/enterprise_rag}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    image: enterprise-rag-app:local
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL_CONTAINER:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/enterprise_rag}
+      REDIS_URL: redis://redis:6379/0
+      DOCUMENT_STORAGE_DIR: /app/storage/documents
+      HF_HOME: /home/app/.cache/huggingface
+    command:
+      ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - document_storage:/app/storage
+      - model_cache:/home/app/.cache/huggingface
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    build: .
+    image: enterprise-rag-app:local
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL_CONTAINER:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/enterprise_rag}
+      REDIS_URL: redis://redis:6379/0
+      DOCUMENT_STORAGE_DIR: /app/storage/documents
+      HF_HOME: /home/app/.cache/huggingface
+    command:
+      [
+        "celery",
+        "-A",
+        "app.core.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+      ]
+    mem_limit: ${WORKER_MEMORY_LIMIT:-4g}
+    cpus: ${WORKER_CPU_LIMIT:-2}
+    volumes:
+      - document_storage:/app/storage
+      - model_cache:/home/app/.cache/huggingface
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  beat:
+    build: .
+    image: enterprise-rag-app:local
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL_CONTAINER:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/enterprise_rag}
+      REDIS_URL: redis://redis:6379/0
+    command:
+      [
+        "celery",
+        "-A",
+        "app.core.celery_app.celery_app",
+        "beat",
+        "--loglevel=INFO",
+      ]
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
+  document_storage:
+  model_cache:
